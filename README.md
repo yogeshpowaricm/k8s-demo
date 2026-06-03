@@ -275,6 +275,91 @@ loadgen-xxxxxxxxx-aaaaa    1/1     Running   0
 
 ---
 
+## Controlling Load
+
+### Stop load
+```bash
+kubectl scale deployment/loadgen -n demo --replicas=0
+```
+
+### Resume load
+```bash
+kubectl scale deployment/loadgen -n demo --replicas=1
+```
+
+### Tune load (without rebuilding)
+```bash
+# Example: double the RPS and increase payload
+kubectl patch configmap loadgen-config -n demo --type merge \
+  -p '{"data":{"TARGET_RPS":"20","PAYLOAD_N":"35"}}'
+
+# Restart loadgen to pick up the new values
+kubectl rollout restart deployment/loadgen -n demo
+```
+
+| Var | Default | Effect |
+|---|---|---|
+| `TARGET_RPS` | `10` | Requests per second |
+| `WORKERS` | `5` | Concurrent goroutines |
+| `PAYLOAD_N` | `35` | Fibonacci n — higher = more CPU per request |
+
+---
+
+## Monitoring
+
+### Watch live stats (one line per second)
+```bash
+kubectl logs -n demo -l app=loadgen --follow
+```
+```json
+{"level":"INFO","msg":"stats","sent":7,"ok":7,"errors":0,"p50_ms":500,"p99_ms":1200}
+```
+
+### Watch HPA scale in real time
+```bash
+kubectl get hpa -n demo --watch
+```
+```
+NAME          REFERENCE            TARGETS         MINPODS   MAXPODS   REPLICAS
+compute-hpa   Deployment/compute   cpu: 400%/50%   2         5         5
+api-hpa       Deployment/api       cpu:  11%/50%   2         5         2
+```
+
+**Reading the CPU target column (`108%/50%`):**
+- Right value (`50%`) — your threshold: fire when average pod CPU exceeds 50% of its CPU **request** (50m → triggers at 25m)
+- Left value (`108%`) — current measurement: pods are using 108% of their request on average right now
+- HPA scales to `ceil(replicas × current/target)`, capped at `maxReplicas`
+
+**`m` = millicores.** `1000m` = 1 full CPU core. `50m` = 5% of one core.
+
+### Watch scale events logged by the load generator
+```bash
+kubectl logs -n demo -l app=loadgen --follow | grep scale_event
+```
+```json
+{"level":"INFO","msg":"scale_event","service":"compute","pods":3,"prev":2}
+{"level":"INFO","msg":"scale_event","service":"compute","pods":5,"prev":3}
+```
+
+### Check all pod statuses
+```bash
+kubectl get pods -n demo
+```
+
+### Tail logs for a specific service
+```bash
+kubectl logs -n demo -l app=compute --follow
+kubectl logs -n demo -l app=api     --follow
+```
+
+### Describe HPA for detailed event history
+```bash
+kubectl describe hpa compute-hpa -n demo
+kubectl describe hpa api-hpa     -n demo
+```
+
+---
+
 ## Step-by-Step Build Order
 
 ```
