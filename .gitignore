@@ -4,3 +4,7 @@ loadgen/loadgen
 
 # Node
 node_modules/
+
+# Downloaded binaries
+kubectl
+minikube-linux-amd64
