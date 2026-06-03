@@ -1,0 +1,6 @@
+# Go binaries
+compute/compute
+loadgen/loadgen
+
+# Node
+node_modules/
