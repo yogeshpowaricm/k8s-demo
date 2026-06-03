@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loadgen-config
+  namespace: demo
+data:
+  TARGET_URL: "http://api-service.demo:3000"
+  TARGET_RPS: "10"
+  WORKERS: "5"
+  PAYLOAD_N: "40"

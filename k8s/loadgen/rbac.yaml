@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: loadgen-sa
+  namespace: demo
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: loadgen-pod-reader
+  namespace: demo
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: loadgen-pod-reader-binding
+  namespace: demo
+subjects:
+  - kind: ServiceAccount
+    name: loadgen-sa
+    namespace: demo
+roleRef:
+  kind: Role
+  name: loadgen-pod-reader
+  apiGroup: rbac.authorization.k8s.io

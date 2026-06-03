@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: compute
+  namespace: demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: compute
+  template:
+    metadata:
+      labels:
+        app: compute
+    spec:
+      containers:
+        - name: compute
+          image: demo/compute:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 64Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 5

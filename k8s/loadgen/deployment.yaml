@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loadgen
+  namespace: demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: loadgen
+  template:
+    metadata:
+      labels:
+        app: loadgen
+    spec:
+      serviceAccountName: loadgen-sa
+      containers:
+        - name: loadgen
+          image: demo/loadgen:latest
+          imagePullPolicy: Never
+          envFrom:
+            - configMapRef:
+                name: loadgen-config
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
