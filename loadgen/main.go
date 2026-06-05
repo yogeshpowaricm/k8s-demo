@@ -21,6 +21,7 @@ type config struct {
 	rps       int
 	workers   int
 	payloadN  int
+	dataDir   string
 }
 
 func loadConfig() config {
@@ -29,6 +30,49 @@ func loadConfig() config {
 		rps:       getEnvInt("TARGET_RPS", 10),
 		workers:   getEnvInt("WORKERS", 5),
 		payloadN:  getEnvInt("PAYLOAD_N", 40),
+		dataDir:   getEnv("DATA_DIR", "/data"),
+	}
+}
+
+// ---- persistent totals (PVC) -----------------------------------------------
+
+type persistedTotals struct {
+	TotalSent    int `json:"total_sent"`
+	TotalOK      int `json:"total_ok"`
+	TotalErrors  int `json:"total_errors"`
+}
+
+func totalsPath(dataDir string) string {
+	return dataDir + "/totals.json"
+}
+
+func loadTotals(dataDir string) persistedTotals {
+	path := totalsPath(dataDir)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return persistedTotals{}
+	}
+	var t persistedTotals
+	if err := json.Unmarshal(b, &t); err != nil {
+		slog.Warn("totals_load_error", "path", path, "error", err.Error())
+		return persistedTotals{}
+	}
+	slog.Info("totals_loaded", "path", path, "total_sent", t.TotalSent)
+	return t
+}
+
+func saveTotals(dataDir string, t persistedTotals) {
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		slog.Warn("totals_save_error", "error", err.Error())
+		return
+	}
+	b, err := json.Marshal(t)
+	if err != nil {
+		slog.Warn("totals_save_error", "error", err.Error())
+		return
+	}
+	if err := os.WriteFile(totalsPath(dataDir), b, 0o644); err != nil {
+		slog.Warn("totals_save_error", "error", err.Error())
 	}
 }
 
@@ -125,7 +169,7 @@ func runWorkers(cfg config, b *bucket) {
 
 // ---- stats logger ----------------------------------------------------------
 
-func runStatsLogger(b *bucket) {
+func runStatsLogger(b *bucket, dataDir string, totals *persistedTotals, totalsMu *sync.Mutex) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
@@ -137,6 +181,20 @@ func runStatsLogger(b *bucket) {
 			"p50_ms", p50,
 			"p99_ms", p99,
 		)
+
+		if sent > 0 {
+			totalsMu.Lock()
+			totals.TotalSent += sent
+			totals.TotalOK += ok
+			totals.TotalErrors += errors
+			saveTotals(dataDir, *totals)
+			slog.Info("totals_persisted",
+				"total_sent", totals.TotalSent,
+				"total_ok", totals.TotalOK,
+				"total_errors", totals.TotalErrors,
+			)
+			totalsMu.Unlock()
+		}
 	}
 }
 
@@ -236,15 +294,20 @@ func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 
 	cfg := loadConfig()
+	totals := loadTotals(cfg.dataDir)
+	var totalsMu sync.Mutex
+
 	slog.Info("starting",
 		"target", cfg.targetURL,
 		"rps", cfg.rps,
 		"workers", cfg.workers,
 		"payload_n", cfg.payloadN,
+		"data_dir", cfg.dataDir,
+		"total_sent", totals.TotalSent,
 	)
 
 	b := &bucket{}
 	go runWorkers(cfg, b)
 	go runPodPoller()
-	runStatsLogger(b) // blocks forever
+	runStatsLogger(b, cfg.dataDir, &totals, &totalsMu) // blocks forever
 }

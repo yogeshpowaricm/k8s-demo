@@ -39,8 +39,27 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	)
 }
 
+func authOK(r *http.Request) bool {
+	expected := os.Getenv("AUTH_TOKEN")
+	if expected == "" {
+		return true
+	}
+	return r.Header.Get("X-Internal-Token") == expected
+}
+
 func computeHandler(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
+
+	if !authOK(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		slog.Warn("request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", http.StatusUnauthorized,
+			"duration_ms", time.Since(start).Milliseconds(),
+		)
+		return
+	}
 
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

@@ -4,6 +4,7 @@ const http = require('http');
 
 const PORT = process.env.PORT || '3000';
 const COMPUTE_SERVICE_URL = process.env.COMPUTE_SERVICE_URL || 'http://compute-service.demo:8080';
+const COMPUTE_AUTH_TOKEN = process.env.COMPUTE_AUTH_TOKEN || '';
 
 // --- structured JSON logger (mirrors compute service slog format) ----------
 
@@ -60,9 +61,13 @@ async function handleCompute(req, res) {
   // forward to compute service
   let result;
   try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (COMPUTE_AUTH_TOKEN) {
+      headers['X-Internal-Token'] = COMPUTE_AUTH_TOKEN;
+    }
     result = await fetch(`${COMPUTE_SERVICE_URL}/compute`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ n: body.n }),
     });
   } catch (err) {

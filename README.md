@@ -21,6 +21,9 @@ This project demonstrates exactly three operational concerns in a real Kubernete
 1. **Health** — know if a service is alive and ready to serve traffic
 2. **Logs** — structured access + application logs for all services, visible via `kubectl logs`
 3. **Auto-scaling** — API and Compute pods scale out under load, scale back down when idle
+4. **Ingress** — external HTTP(S) access to the API via nginx ingress on minikube
+5. **Secrets** — service-to-service auth token (api → compute)
+6. **Persistent storage** — loadgen cumulative stats survive pod restarts (PVC)
 
 The Load Generator makes the demo self-contained — no external tools (`hey`, `k6`, `curl` loops) needed.  
 Watch everything work by tailing a single log stream.
@@ -32,10 +35,8 @@ Watch everything work by tailing a single log stream.
 ```
 k8s-autoscale-demo/
 │
-├── api/                          # Next.js API service
-│   ├── src/app/api/
-│   │   ├── health/route.ts       # GET  /api/health
-│   │   └── compute/route.ts      # POST /api/compute  →  calls compute svc
+├── api/                          # Node.js API gateway
+│   ├── main.js                   # GET /api/health  POST /api/compute
 │   ├── Dockerfile
 │   └── package.json
 │
@@ -51,21 +52,29 @@ k8s-autoscale-demo/
 │
 ├── k8s/
 │   ├── namespace.yaml
+│   ├── secrets/
+│   │   └── compute-auth.yaml     # shared api → compute token
+│   ├── storage/
+│   │   └── loadgen-pvc.yaml      # persistent disk for loadgen
 │   ├── api/
 │   │   ├── deployment.yaml       # replicas: 2
-│   │   ├── service.yaml          # NodePort (minikube-friendly)
+│   │   ├── service.yaml          # ClusterIP (internal)
+│   │   ├── ingress.yaml          # external HTTPS via api.demo.local
 │   │   └── hpa.yaml              # min 2 / max 5
 │   ├── compute/
 │   │   ├── deployment.yaml       # replicas: 2
 │   │   ├── service.yaml          # ClusterIP (internal only)
 │   │   └── hpa.yaml              # min 2 / max 5
 │   └── loadgen/
-│       ├── deployment.yaml       # replicas: 1, no HPA
-│       └── configmap.yaml        # TARGET_RPS, WORKERS, PAYLOAD_N
+│       ├── deployment.yaml       # replicas: 1, PVC mount at /data
+│       ├── configmap.yaml        # TARGET_RPS, WORKERS, PAYLOAD_N
+│       └── rbac.yaml             # list pods for scale_event logs
+│
+├── scripts/
+│   └── generate-tls-secret.sh    # self-signed TLS for Ingress
 │
 └── docs/
-    ├── howto.md                  # Build → deploy, step by step
-    └── monitoring.md             # Reading logs, watching HPA react
+    └── learn.md                  # guided tutorial (Docker, k8s, extensions)
 ```
 
 ---
@@ -97,7 +106,7 @@ Config (via ConfigMap → env vars):
 
 ---
 
-### API Service (Next.js) — port 3000
+### API Service (Node.js) — port 3000
 
 | Endpoint | Method | Purpose |
 |---|---|---|
@@ -115,6 +124,7 @@ Logs: one structured JSON line per request (method, path, status, duration_ms) +
 | `/health` | GET | Liveness + readiness probe → `{"status":"ok"}` |
 | `/compute` | POST | Accepts `{"n":N}`, runs fibonacci(N), returns `{"result":R,"duration_ms":D}` |
 
+Requires `X-Internal-Token` header when `AUTH_TOKEN` is set (from Secret).  
 Logs: one structured JSON line per request + errors.
 
 > **Why fibonacci?** It's CPU-bound, deterministic, and the load can be tuned by changing `PAYLOAD_N`.
@@ -174,12 +184,15 @@ metrics:
 
 | Service | Type | Access |
 |---|---|---|
-| api-service | NodePort | `minikube service api-service -n demo` → gives local URL |
+| api-service | ClusterIP | Internal — `http://api-service.demo:3000` (loadgen uses this) |
+| api-ingress | Ingress | External — `https://api.demo.local` (add minikube IP to `/etc/hosts`) |
 | compute-service | ClusterIP | Internal only — API pods reach it by DNS name |
 | loadgen | none | Initiates traffic only, nothing calls into it |
 
-> LoadBalancer type stays `<pending>` on minikube forever — NodePort is the correct
-> choice for local clusters.
+```bash
+# External access via Ingress (after ./scripts/generate-tls-secret.sh)
+curl -k https://api.demo.local/api/health
+```
 
 ### Health probes (api + compute)
 
@@ -217,8 +230,9 @@ readinessProbe:
 # POC sizing — 2 CPUs and 2GB RAM is plenty for 5 small pods
 minikube start --cpus=2 --memory=2g
 
-# Enable metrics-server — required for HPA to work
+# Enable addons — metrics-server (HPA) + ingress (external API access)
 minikube addons enable metrics-server
+minikube addons enable ingress
 
 # Point your local Docker CLI at minikube's Docker daemon
 # Run this in every terminal session used for building
@@ -246,11 +260,17 @@ docker build -t demo/api:latest     ./api
 docker build -t demo/compute:latest ./compute
 docker build -t demo/loadgen:latest ./loadgen
 
-# 4. Deploy
+# 4. TLS secret for Ingress + deploy all manifests
+./scripts/generate-tls-secret.sh
 kubectl apply -f k8s/namespace.yaml
+kubectl apply -f k8s/secrets/
+kubectl apply -f k8s/storage/
 kubectl apply -f k8s/compute/
 kubectl apply -f k8s/api/
 kubectl apply -f k8s/loadgen/
+
+# Optional: external API access — add minikube IP to /etc/hosts as api.demo.local
+# echo "$(minikube ip) api.demo.local" | sudo tee -a /etc/hosts
 
 # 5. Verify — expect 2+2+1 pods all Running
 kubectl get pods -n demo
@@ -399,16 +419,14 @@ Step 5 — Deploy & observe
 
 ## Docs
 
-- [`docs/howto.md`](docs/howto.md) — full walkthrough with every command explained
-- [`docs/monitoring.md`](docs/monitoring.md) — reading logs, triggering scale, what to look for
+- [`docs/learn.md`](docs/learn.md) — guided tutorial: Docker, containers, k8s internals, Ingress, Secrets, PVCs
 
 ---
 
 ## What This Demo Does NOT Cover (intentionally)
 
-- TLS / ingress certificates
-- Secrets management
-- Persistent storage
+- Production-grade TLS (cert-manager, Let's Encrypt)
+- Secrets encryption at rest / external vaults
 - Service mesh / Istio
 - Distributed tracing
 - CI/CD pipeline

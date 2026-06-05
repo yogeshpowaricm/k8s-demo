@@ -22,6 +22,11 @@ spec:
           env:
             - name: COMPUTE_SERVICE_URL
               value: "http://compute-service.demo:8080"
+            - name: COMPUTE_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: compute-auth
+                  key: token
           resources:
             requests:
               cpu: 50m
